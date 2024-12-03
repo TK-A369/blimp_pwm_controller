@@ -26,18 +26,29 @@ ISR(TWI_vect) {
 	switch(TWSR & 0b11111000) {
 		case 0x60:
 			// SLA+W received
+			twi_duties_counter = 0;
 			// Send ACK and receive byte
 			TWCR = (1 << TWINT) | (1 << TWEA) | (1 << TWEN) | (1 << TWIE);
 			break;
 		case 0x80:
 			// Data received
-			// Send ACK and receive another byte
 			twdr_tmp = TWDR;
 			// Map from 0-255 to 1000-2000
 			twi_duties_buf[twi_duties_counter] = (((uint32_t)twdr_tmp) * 1000 / 255) + 1000;
 			twi_duties_counter++;
-			TWCR = (1 << TWINT) | (1 << TWEA) | (1 << TWEN) | (1 << TWIE);
+			if(twi_duties_counter > CHANNELS) {
+				// Too much data - receive byte but respond with NACK
+				TWCR = (1 << TWINT) | (1 << TWEN) | (1 << TWIE);
+			}
+			else {
+				// Receive byte and respond with ACK
+				TWCR = (1 << TWINT) | (1 << TWEA) | (1 << TWEN) | (1 << TWIE);
+			}
 			break;
+		case 0x88:
+			// Data received, but responded with NACK
+			// Switch to not addressed slave mode
+			TWCR = (1 << TWINT) | (1 << TWEA) | (1 << TWEN) | (1 << TWIE);
 		case 0xA0:
 			// STOP or REPEATED START received
 			
@@ -86,14 +97,12 @@ ISR(TIMER1_CAPT_vect) {
 ISR(TIMER1_COMPA_vect) {
 	//PORTC ^= (1 << 0);
 	
-	uint16_t tcnt1_buf = TCNT1;
 	do {
 		uint8_t chan = channels_entries_front[next_channel_entry].channel;
 		*(outputs_ports[chan >> 2 /* divide by 4 */]) &=~ (1 << outputs_pins[chan]);
 		
 		next_channel_entry++;
-		tcnt1_buf += 10;
-	} while (next_channel_entry < CHANNELS && channels_entries_front[next_channel_entry].duty < tcnt1_buf);
+	} while (next_channel_entry < CHANNELS && channels_entries_front[next_channel_entry].duty < TCNT1 + 40);
 	
 	if (next_channel_entry < CHANNELS) {
 		OCR1A = channels_entries_front[next_channel_entry].duty;
